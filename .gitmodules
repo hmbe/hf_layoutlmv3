@@ -1,0 +1,3 @@
+[submodule "hf_utils"]
+	path = hf_utils
+	url = https://github.com/hmbe/hf_utils
