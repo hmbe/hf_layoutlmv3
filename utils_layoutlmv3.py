@@ -298,7 +298,9 @@ def init_visual_bbox(img_size=(14, 14), max_len=1000):
 def create_alignment_label(visual_bbox, text_bbox, bool_mi_pos):
     num_text = len(text_bbox)
     labels = torch.ones(num_text)
+    ### ml: bool_mi_pos의 경우 True, False로 특정 label이 masked 되어 사용이 불가한지, 가능한지 여부를 기록해 놓은 list로 보임.
     for v_b in visual_bbox[bool_mi_pos]:
+        ### ml: 대상 text bbox가 visual bbox에 포함되면 true(0)으로 기입, 한번만 걸리면 0으로 기입됨 
         for j, t_b in enumerate(text_bbox):
             if is_content_bbox(t_b, v_b) or is_content_bbox_2(t_b, v_b):
                 labels[j] = 0

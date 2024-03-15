@@ -1,11 +1,8 @@
 import sys, os
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '3,4'
 
 from datasets import load_dataset
-
-# this dataset uses the new Image feature :)
-# dataset = load_dataset("RIPS-Goog-23/IIT-CDIP", split='ra9', streaming=True)
-
 from PIL import Image
 # from transformers import LayoutLMv2Processor, LayoutXLMProcessor, LayoutLMv3Processor
 from processing_pretrain_layoutlmv3 import LayoutLMv3PretrainProcessor
@@ -26,29 +23,17 @@ from datasets import Features, Sequence, ClassLabel, Value, Array2D, Array3D
 
 from utils_layoutlmv3 import create_alignment_label, init_visual_bbox
 
-# from transformers.data.data_collator import default_data_collator
 from data_collator_pretrain_layoutlmv3 import DataCollatorForLayoutLMv3
 import evaluate
 import torch
 
 example_dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
-# example_dataset = load_dataset("oscar-corpus/OSCAR-2201", 'en', streaming=True)
-
-# model = LayoutLMv3ForTokenClassification.from_pretrained("microsoft/layoutlmv3-base",
 model = LayoutLMv3ForPretraining.from_pretrained("microsoft/layoutlmv3-base",
                                                          id2label=id2label,
                                                          label2id=label2id)
 
 auto_config = AutoConfig.from_pretrained("microsoft/layoutlmv3-base")
-
-# labels = example_dataset['train'].features['ner_tags'].feature.names
-# id2label = {v: k for v, k in enumerate(labels)}
-# label2id = {k: v for v, k in enumerate(labels)}
-
 processor = LayoutLMv3PretrainProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
-
-
-######### temporary
 
 class MaskGenerator:
     """
@@ -83,15 +68,10 @@ class MaskGenerator:
         mask = mask.reshape((self.rand_size, self.rand_size))
         mask = mask.repeat(self.scale, axis=0).repeat(self.scale, axis=1)
 
-        return torch.tensor(mask.flatten())
+        # return torch.tensor(mask.flatten())
 
-# create mask generator
-# mask_generator = MaskGenerator(
-#     input_size=model_args.image_size,
-#     mask_patch_size=data_args.mask_patch_size,
-#     model_patch_size=model_args.patch_size,
-#     mask_ratio=data_args.mask_ratio,
-# )
+        ### ml: convert 0, 1 to True, False 
+        return torch.tensor(mask.flatten()).to(torch.bool)
 
 mask_generator = MaskGenerator(
     input_size = auto_config.input_size,
@@ -110,19 +90,18 @@ def prepare_examples(examples, is_train=True):
 
     ### im_mask
     encoding["im_mask"] = [mask_generator() for i in range(len(encoding['pixel_values']))]
+
     ### visual_bbox
     text_bboxes = encoding['bbox']
-    image_positions = encoding['im_mask']
+    image_poses = encoding['im_mask']
     visual_bbox = init_visual_bbox()
 
-    for idx in range(len(visual_bboxes)):
-        visual_bbox = visual_bboxes[idx]
-        text_bbox = text_bboxes[idx]
-        image_pos = image_poses[idx]
-
-        create_alignment_label(visual_bbox, text_bbox, image_pos)
-    
-    encoding["alignment_labels"] 
+    ### batch 별 별도 처리 수행
+    encoding["alignment_labels"] = []
+    for batch_idx in range(len(text_bboxes)):
+        text_bbox = text_bboxes[batch_idx]
+        image_pos = image_poses[batch_idx]
+        encoding["alignment_labels"].append(create_alignment_label(visual_bbox, text_bbox, image_pos)) 
 
     offset_mapping = encoding.pop('offset_mapping')
     overflow_to_sample_mapping = encoding.pop('overflow_to_sample_mapping')
@@ -138,13 +117,14 @@ features = Features({
     'labels': Sequence(feature=Value(dtype='int64')),
     'im_labels': Sequence(feature=Value(dtype='int64')),
     'im_mask': Sequence(feature=Value(dtype='int64')),
+    'alignment_labels': Sequence(feature=Value(dtype='bool')),
 })
 
 ### join data collator for applying mlm
 # pad_to_multiple_of_8 = data_args.line_by_line and training_args.fp16 and not data_args.pad_to_max_length
 data_collator = DataCollatorForLayoutLMv3(
     tokenizer=processor.tokenizer,
-    mlm_probability=0.2,
+    mlm_probability=0.9,
     pad_to_multiple_of=None,
 )
 
@@ -167,43 +147,6 @@ test_dataset = example_dataset["test"].map(
     remove_columns=column_names,
     features=features,
 )
-
-
-# metric = load_metric("seqeval")
-# return_entity_level_metrics = False
-
-# def compute_metrics(p):
-#     predictions, labels = p
-#     predictions = np.argmax(predictions, axis=2)
-
-#     # Remove ignored index (special tokens)
-#     true_predictions = [
-#         [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
-#         for prediction, label in zip(predictions, labels)
-#     ]
-#     true_labels = [
-#         [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
-#         for prediction, label in zip(predictions, labels)
-#     ]
-
-#     results = metric.compute(predictions=true_predictions, references=true_labels)
-#     if return_entity_level_metrics:
-#         # Unpack nested dictionaries
-#         final_results = {}
-#         for key, value in results.items():
-#             if isinstance(value, dict):
-#                 for n, v in value.items():
-#                     final_results[f"{key}_{n}"] = v
-#             else:
-#                 final_results[key] = value
-#         return final_results
-#     else:
-#         return {
-#             "precision": results["overall_precision"],
-#             "recall": results["overall_recall"],
-#             "f1": results["overall_f1"],
-#             "accuracy": results["overall_accuracy"],
-#         }
 
 def preprocess_logits_for_metrics(logits, labels):
     if isinstance(logits, tuple):
@@ -245,19 +188,6 @@ training_args = TrainingArguments(output_dir="test",
                                   overwrite_output_dir=True,
                                   )
 
-# max_steps=2000, # we train for a maximum of 1,000 batches
-# warmup_ratio=0.1, # we warmup a bit
-# fp16=True, # we use mixed precision (less memory consumption)
-# evaluation_strategy="steps", # we evaluate every 100 steps
-# eval_steps=250, # we evaluate every 100 steps
-# logging_steps=250,
-# save_strategy="steps",
-# save_steps=250,
-# save_total_limit=3,
-# metric_for_best_model="eval_loss",
-# greater_is_better=False,
-# load_best_model_at_end=True,
-# overwrite_output_dir=True
 
 # Initialize our Trainer
 trainer = Trainer(

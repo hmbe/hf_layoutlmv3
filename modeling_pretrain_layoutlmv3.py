@@ -319,8 +319,10 @@ class CustomRobertaLMHead(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         
-        ### ml: for shrinking 2nd dim 512 -> 196
-        self.conv_1d = nn.Conv1d(in_channels=512, out_channels=196, kernel_size=1)
+        ### ml: shrinking 2nd dim 512 -> 196
+        ### ml: make conv config
+        # self.conv_1d = nn.Conv1d(in_channels=512, out_channels=196, kernel_size=1)
+        self.conv_1d = nn.Conv1d(in_channels=config.conv_input_size, out_channels=config.conv_output_size, kernel_size=1)
 
         self.decoder = nn.Linear(config.hidden_size, config.vocab_size)
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
@@ -347,7 +349,7 @@ class CustomRobertaLMHead(nn.Module):
         else:
             self.bias = self.decoder.bias
 
-
+### ml: custom model
 ### ml: 1st step, only train with mlm 
 class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
     def __init__(self, config):
@@ -356,16 +358,24 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
 
         self.layoutlmv3 = BaseLayoutLMv3Model(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
         self.lm_head = RobertaLMHead(config)
         # self.im_head = LayoutLMv3ClassificationHead(config, pool_feature=False)
 
-        self.image_tokenizer = None
+        self.image_tokenizer = None 
 
         ### ml: add config.hidden_size, config.layer_norm_eps, config.vocab_size
         self.im_head_config = copy.deepcopy(config)
+        self.im_head_config.conv_input_size = 197
+        self.im_head_config.conv_output_size = 196
         self.im_head_config.vocab_size = 8192 ### ml: image_tokenizer vocab size
         self.im_head = CustomRobertaLMHead(self.im_head_config)
+
+        ### TODO: CHANGE model type
+        self.wpa_head_config = copy.deepcopy(config)
+        self.wpa_head_config.conv_input_size = 709
+        self.wpa_head_config.conv_output_size = 512
+        self.wpa_head_config.vocab_size = 2 ### ml: alignment binary labels
+        self.wpa_head = CustomRobertaLMHead(self.wpa_head_config)
 
         self.init_weights()
     
@@ -387,9 +397,11 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         pixel_values: Optional[torch.LongTensor] = None,
-        ### ml:
+        
+        ### ml: custom params
         im_labels: Optional[torch.LongTensor] = None,
         im_mask:Optional[torch.LongTensor] = None,
+        alignment_labels: Optional[bool] = None,
 
     ) -> Union[Tuple, TokenClassifierOutput]:
         r"""
@@ -434,9 +446,10 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             pixel_values=pixel_values,
-            ### ml:
+            
+            ### ml: custom params
             im_labels=im_labels,
-            im_mask=im_mask
+            im_mask=im_mask,
         )
         if input_ids is not None:
             input_shape = input_ids.size()
@@ -448,63 +461,87 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
         sequence_output = outputs[0][:, :seq_length]
         sequence_output = self.dropout(sequence_output)
 
+        im_sequence_output = outputs[0][:, seq_length:]
+        im_sequence_output = self.dropout(im_sequence_output)
+
+        wpa_sequence_output = outputs[0]
+        wpa_sequence_output = self.dropout(wpa_sequence_output)
+
         ### ml: try to use LMHead and MLM loss
         prediction_scores = self.lm_head(sequence_output)
 
-        ### ml: v1, loss calculated by all text tokens
+        def filter_values(matrix, filter_matrix):
+            filtered_matrix = [[value for value, is_true in zip(row, filter_row) if is_true or is_true == 1] for row, filter_row in zip(matrix, filter_matrix)]
+            return filtered_matrix
+
+        mask_token = 50264
         masked_lm_loss = None
         if labels is not None:
             # move labels to correct device to enable model parallelism
+            lm_mask = [[value == mask_token for value in row] for row in input_ids.tolist()]
+            
             labels = labels.to(prediction_scores.device)
             loss_fct = CrossEntropyLoss()
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+            
+            masked_labels = filter_values(labels, lm_mask)
+            masked_prediction_scores = filter_values(prediction_scores, lm_mask)
+
+            # masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+            ### ml: flatten python list
+            flatten_masked_labels = torch.tensor([x for masked_label in masked_labels for x in masked_label]).to("cuda")
+            flatten_masked_prediction_scores = torch.stack([x for masked_prediction_score in masked_prediction_scores for x in masked_prediction_score])
+            masked_lm_loss = loss_fct(flatten_masked_prediction_scores, flatten_masked_labels)
 
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
             return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
 
-        im_prediction_scores = self.im_head(sequence_output)
-        
-        # batch_size, sequence_length, num_channels = sequence_output.shape
-        # height = width = math.floor(sequence_length**0.5)
-        # sequence_output = sequence_output.permute(0, 2, 1).reshape(batch_size, num_channels, height, width)
-
-        # # Reconstruct pixel values
-        # reconstructed_pixel_values = self.decoder(sequence_output)
-        
-
-        ### ml: v1, loss calculated by all image tokens
+        ### ml: im loss
+        im_prediction_scores = self.im_head(im_sequence_output)
         masked_im_loss = None
         if im_labels is not None:
             # move labels to correct device to enable model parallelism
             im_labels = im_labels.to(im_prediction_scores.device)
+
+            masked_im_labels = filter_values(im_labels, im_mask)
+            masked_im_prediction_scores = filter_values(im_prediction_scores, im_mask)
+
+            flatten_masked_im_labels = torch.tensor([x for masked_label in masked_im_labels for x in masked_label]).to("cuda")
+            flatten_masked_im_prediction_scores = torch.stack([x for masked_prediction_score in masked_im_prediction_scores for x in masked_prediction_score])
+
             loss_fct = CrossEntropyLoss()
-            masked_im_loss = loss_fct(im_prediction_scores.view(-1, self.im_head_config.vocab_size), im_labels.view(-1))
+            masked_im_loss = loss_fct(flatten_masked_im_prediction_scores,flatten_masked_im_labels)
 
-        # if not return_dict:
-        #     output = (prediction_scores,) + outputs[2:]
-        #     return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
+        ### ml: wpa loss
+        wpa_prediction_scores = self.wpa_head(wpa_sequence_output)
+        masked_wpa_loss = None
+        if alignment_labels is not None:
+            # move labels to correct device to enable model parallelism
+            alignment_labels = alignment_labels.to(wpa_prediction_scores.device)
 
-        ### v2, loss calculated by masked image tokens
-        # if bool_masked_pos is not None:
-        #     size = self.config.image_size // self.config.patch_size
-        #     bool_masked_pos = bool_masked_pos.reshape(-1, size, size)
-        #     mask = (
-        #         bool_masked_pos.repeat_interleave(self.config.patch_size, 1)
-        #         .repeat_interleave(self.config.patch_size, 2)
-        #         .unsqueeze(1)
-        #         .contiguous()
-        #     )
-        #     reconstruction_loss = nn.functional.l1_loss(pixel_values, reconstructed_pixel_values, reduction="none")
-        #     masked_im_loss = (reconstruction_loss * mask).sum() / (mask.sum() + 1e-5) / self.config.num_channels
+            masked_wpa_labels = filter_values(alignment_labels, lm_mask)
+            masked_wpa_prediction_scores = filter_values(wpa_prediction_scores, lm_mask)
 
-        # if not return_dict:
-        #     output = (reconstructed_pixel_values,) + outputs[1:]
-        #     return ((masked_im_loss,) + output) if masked_im_loss is not None else output
+            flatten_masked_wpa_labels = torch.tensor([x for masked_label in masked_wpa_labels for x in masked_label])
+            flatten_masked_wpa_prediction_scores = torch.stack([x for masked_prediction_score in masked_wpa_prediction_scores for x in masked_prediction_score])
 
-        ### ml: mlm + mim loss
+            ### ml: change wpa labels type (bool to nodes)
+            _flatten_masked_wpa_labels = torch.zeros(flatten_masked_wpa_prediction_scores.shape)
+
+            for i in range(flatten_masked_wpa_labels.size(0)):
+                if flatten_masked_wpa_labels[i]:
+                    _flatten_masked_wpa_labels[i, 0] = 1
+                else:
+                    _flatten_masked_wpa_labels[i, 1] = 1
+
+            flatten_masked_wpa_labels = _flatten_masked_wpa_labels.to("cuda")
+
+            loss_fct = CrossEntropyLoss()
+            masked_wpa_loss = loss_fct(flatten_masked_wpa_prediction_scores, flatten_masked_wpa_labels)
+            
+        ### ml: mlm + mim + wpa loss
         ### TODO: apply cogview
-        p_loss = masked_lm_loss + masked_im_loss    
+        p_loss = masked_lm_loss + masked_im_loss + masked_wpa_loss
         
         return LayoutLMOutput(
             # loss=masked_lm_loss,
@@ -514,26 +551,6 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-    
-        ### ml: token classification loss
-        # logits = self.classifier(sequence_output)
-
-        # loss = None
-        # if labels is not None:
-        #     loss_fct = CrossEntropyLoss()
-        #     loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-
-        # if not return_dict:
-        #     output = (logits,) + outputs[1:]
-        #     return ((loss,) + output) if loss is not None else output
-
-        # return TokenClassifierOutput(
-        #     loss=loss,
-        #     logits=logits,
-        #     hidden_states=outputs.hidden_states,
-        #     attentions=outputs.attentions,
-        # )
-
 
 if __name__ == '__main__':
     from hf_utils.dataset.utils.funsd_utils import label_list, id2label, label2id
