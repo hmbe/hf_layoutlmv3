@@ -103,7 +103,6 @@ class LayoutLMv3PretrainProcessor(ProcessorMixin):
             ])
         
         def load_image_tokenizer(path='./dall_e_tokenizer/encoder.pkl'):
-
             if path.startswith('http://') or path.startswith('https://'):
                 resp = requests.get(path)
                 resp.raise_for_status()
@@ -113,7 +112,7 @@ class LayoutLMv3PretrainProcessor(ProcessorMixin):
             else:
                 if path == './dall_e_tokenizer/encoder.pkl':
                     if not os.path.exists(path):
-                        print('f{path} is not exist! download dall-e encoder.pkl now..')
+                        print(f'{path} is not exist! download dall-e encoder.pkl now..')
                         resp = requests.get('https://cdn.openai.com/dall-e/encoder.pkl')
                         resp.raise_for_status()
                         os.makedirs(os.path.dirname(path), exist_ok=True)

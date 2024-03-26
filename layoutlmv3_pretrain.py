@@ -1,6 +1,6 @@
 import sys, os
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-os.environ['CUDA_VISIBLE_DEVICES'] = '3,4'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 from datasets import load_dataset
 from PIL import Image
@@ -22,6 +22,7 @@ from transformers import TrainingArguments, Trainer
 from datasets import Features, Sequence, ClassLabel, Value, Array2D, Array3D
 
 from utils_layoutlmv3 import create_alignment_label, init_visual_bbox
+from utils_layoutlmv3 import MaskGenerator
 
 from data_collator_pretrain_layoutlmv3 import DataCollatorForLayoutLMv3
 import evaluate
@@ -34,44 +35,6 @@ model = LayoutLMv3ForPretraining.from_pretrained("microsoft/layoutlmv3-base",
 
 auto_config = AutoConfig.from_pretrained("microsoft/layoutlmv3-base")
 processor = LayoutLMv3PretrainProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
-
-class MaskGenerator:
-    """
-    A class to generate boolean masks for the pretraining task.
-
-    A mask is a 1D tensor of shape (model_patch_size**2,) where the value is either 0 or 1,
-    where 1 indicates "masked".
-    """
-
-    def __init__(self, input_size=192, mask_patch_size=32, model_patch_size=4, mask_ratio=0.6):
-        self.input_size = input_size
-        self.mask_patch_size = mask_patch_size
-        self.model_patch_size = model_patch_size
-        self.mask_ratio = mask_ratio
-
-        if self.input_size % self.mask_patch_size != 0:
-            raise ValueError("Input size must be divisible by mask patch size")
-        if self.mask_patch_size % self.model_patch_size != 0:
-            raise ValueError("Mask patch size must be divisible by model patch size")
-
-        self.rand_size = self.input_size // self.mask_patch_size
-        self.scale = self.mask_patch_size // self.model_patch_size
-
-        self.token_count = self.rand_size**2
-        self.mask_count = int(np.ceil(self.token_count * self.mask_ratio))
-
-    def __call__(self):
-        mask_idx = np.random.permutation(self.token_count)[: self.mask_count]
-        mask = np.zeros(self.token_count, dtype=int)
-        mask[mask_idx] = 1
-
-        mask = mask.reshape((self.rand_size, self.rand_size))
-        mask = mask.repeat(self.scale, axis=0).repeat(self.scale, axis=1)
-
-        # return torch.tensor(mask.flatten())
-
-        ### ml: convert 0, 1 to True, False 
-        return torch.tensor(mask.flatten()).to(torch.bool)
 
 mask_generator = MaskGenerator(
     input_size = auto_config.input_size,
