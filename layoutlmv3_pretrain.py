@@ -1,6 +1,6 @@
 import sys, os
-# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '5'
 
 from datasets import load_dataset
 from PIL import Image
@@ -20,6 +20,7 @@ from transformers import AutoConfig, AutoModel
 
 from transformers import TrainingArguments, Trainer
 from datasets import Features, Sequence, ClassLabel, Value, Array2D, Array3D
+from transformers import AdamW
 
 from utils_layoutlmv3 import create_alignment_label, init_visual_bbox
 from utils_layoutlmv3 import MaskGenerator
@@ -29,9 +30,11 @@ import evaluate
 import torch
 
 example_dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 model = LayoutLMv3ForPretraining.from_pretrained("microsoft/layoutlmv3-base",
-                                                         id2label=id2label,
-                                                         label2id=label2id)
+                                                        id2label=id2label,
+                                                        label2id=label2id,
+                                                        )
 
 auto_config = AutoConfig.from_pretrained("microsoft/layoutlmv3-base")
 processor = LayoutLMv3PretrainProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
@@ -40,6 +43,7 @@ mask_generator = MaskGenerator(
     input_size = auto_config.input_size,
     mask_patch_size = auto_config.patch_size * 2,
     model_patch_size = auto_config.patch_size,
+    mask_ratio = 0.4
 )
 
 def prepare_examples(examples, is_train=True):
@@ -87,7 +91,7 @@ features = Features({
 # pad_to_multiple_of_8 = data_args.line_by_line and training_args.fp16 and not data_args.pad_to_max_length
 data_collator = DataCollatorForLayoutLMv3(
     tokenizer=processor.tokenizer,
-    mlm_probability=0.9,
+    mlm_probability=0.3,
     pad_to_multiple_of=None,
 )
 
@@ -139,7 +143,7 @@ training_args = TrainingArguments(output_dir="test",
                                   max_steps=5000,
                                   per_device_train_batch_size=4,
                                   per_device_eval_batch_size=4,
-                                  learning_rate=1e-5,
+                                  learning_rate=1e-4,
                                   evaluation_strategy="steps",
                                   eval_steps=100,
                                   load_best_model_at_end=True,
@@ -149,6 +153,7 @@ training_args = TrainingArguments(output_dir="test",
                                   save_total_limit=5,
                                   greater_is_better=False,
                                   overwrite_output_dir=True,
+                                  weight_decay=1e-2
                                   )
 
 

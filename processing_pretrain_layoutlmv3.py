@@ -31,6 +31,9 @@ import os
 import requests
 import io
 
+from dall_e.encoder import Encoder
+from dall_e.decoder import Decoder
+
 ### ml: for dalle encoder
 logit_laplace_eps: float = 0.1
 
@@ -109,7 +112,7 @@ class LayoutLMv3PretrainProcessor(ProcessorMixin):
                     
                 with io.BytesIO(resp.content) as buf:
                     return torch.load(buf)
-            else:
+            elif os.path.splitext(path)[1] == '.pkl':
                 if path == './dall_e_tokenizer/encoder.pkl':
                     if not os.path.exists(path):
                         print(f'{path} is not exist! download dall-e encoder.pkl now..')
@@ -123,7 +126,26 @@ class LayoutLMv3PretrainProcessor(ProcessorMixin):
                 with open(path, 'rb') as f:
                     return torch.load(f)
             
-        self.image_tokenizer = load_image_tokenizer()
+            ### ml: custom image tokenizer
+            elif os.path.splitext(path)[1] == '.pt':
+                if not torch.cuda.is_available():
+                    device = torch.device('cpu')
+                else:
+                    device = torch.device('cuda')
+                vae_model = torch.load(path, device)
+                enc = Encoder()
+                enc_state_dict = {}
+                for key, value in vae_model['module'].items():
+                    if 'vae.enc.' == key[:len('vae.enc.')]:
+                        enc_state_dict[key[len('vae.enc.'):]] = value
+                    # elif 'vae.dec.' == key[:len('vae.dec.')]:
+                    #     dec_state_dict[key[len('vae.dec.'):]] = value
+                        
+                enc.load_state_dict(enc_state_dict, device)
+                return enc
+                 
+            
+        self.image_tokenizer = load_image_tokenizer('/home/mingi.lim/workspace/dall_e_tokenizer/global_step608626_19M_ep1.x_dalle_v2/model_states.pt')
 
     def __call__(
         self,

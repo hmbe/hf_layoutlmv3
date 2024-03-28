@@ -319,9 +319,7 @@ class CustomRobertaLMHead(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         
-        ### ml: shrinking 2nd dim 512 -> 196
-        ### ml: make conv config
-        # self.conv_1d = nn.Conv1d(in_channels=512, out_channels=196, kernel_size=1)
+        ### ml: shrinking 2nd dim
         self.conv_1d = nn.Conv1d(in_channels=config.conv_input_size, out_channels=config.conv_output_size, kernel_size=1)
 
         self.decoder = nn.Linear(config.hidden_size, config.vocab_size)
@@ -378,6 +376,7 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
         self.wpa_head = CustomRobertaLMHead(self.wpa_head_config)
 
         self.init_weights()
+
     
     @add_start_docstrings_to_model_forward(
         LAYOUTLMV3_DOWNSTREAM_INPUTS_DOCSTRING.format("batch_size, sequence_length")
@@ -488,7 +487,8 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
 
             # masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
             ### ml: flatten python list
-            flatten_masked_labels = torch.tensor([x for masked_label in masked_labels for x in masked_label]).to("cuda")
+            # flatten_masked_labels = torch.tensor([x for masked_label in masked_labels for x in masked_label]).to("cuda")
+            flatten_masked_labels = torch.tensor([x for masked_label in masked_labels for x in masked_label]).to(self.device)
             flatten_masked_prediction_scores = torch.stack([x for masked_prediction_score in masked_prediction_scores for x in masked_prediction_score])
             masked_lm_loss = loss_fct(flatten_masked_prediction_scores, flatten_masked_labels)
 
@@ -506,7 +506,8 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
             masked_im_labels = filter_values(im_labels, im_mask)
             masked_im_prediction_scores = filter_values(im_prediction_scores, im_mask)
 
-            flatten_masked_im_labels = torch.tensor([x for masked_label in masked_im_labels for x in masked_label]).to("cuda")
+            # flatten_masked_im_labels = torch.tensor([x for masked_label in masked_im_labels for x in masked_label]).to("cuda")
+            flatten_masked_im_labels = torch.tensor([x for masked_label in masked_im_labels for x in masked_label]).to(self.device)
             flatten_masked_im_prediction_scores = torch.stack([x for masked_prediction_score in masked_im_prediction_scores for x in masked_prediction_score])
 
             loss_fct = CrossEntropyLoss()
@@ -534,7 +535,8 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
                 else:
                     _flatten_masked_wpa_labels[i, 1] = 1
 
-            flatten_masked_wpa_labels = _flatten_masked_wpa_labels.to("cuda")
+            # flatten_masked_wpa_labels = _flatten_masked_wpa_labels.to("cuda")
+            flatten_masked_wpa_labels = _flatten_masked_wpa_labels.to(self.device)
 
             loss_fct = CrossEntropyLoss()
             masked_wpa_loss = loss_fct(flatten_masked_wpa_prediction_scores, flatten_masked_wpa_labels)
