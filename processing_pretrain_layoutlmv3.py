@@ -31,10 +31,6 @@ import os
 import requests
 import io
 
-from dall_e.encoder import Encoder
-from dall_e.decoder import Decoder
-
-### ml: for dalle encoder
 logit_laplace_eps: float = 0.1
 
 def map_pixels(x: torch.Tensor) -> torch.Tensor:
@@ -76,9 +72,9 @@ class LayoutLMv3PretrainProcessor(ProcessorMixin):
 
     attributes = ["image_processor", "tokenizer"]
     image_processor_class = "LayoutLMv3ImageProcessor"
-    tokenizer_class = ("LayoutLMv3Tokenizer", "LayoutLMv3TokenizerFast")
+    tokenizer_class = ("LayoutLMv3Tokenizer", "LayoutLMv3TokenizerFast", "LayoutLMv2Tokenizer", "LayoutLMv2TokenizerFast")
 
-    def __init__(self, image_processor=None, tokenizer=None, **kwargs):
+    def __init__(self, image_processor=None, tokenizer=None, image_tokenizer=None, **kwargs):
         feature_extractor = None
         if "feature_extractor" in kwargs:
             warnings.warn(
@@ -89,14 +85,15 @@ class LayoutLMv3PretrainProcessor(ProcessorMixin):
             feature_extractor = kwargs.pop("feature_extractor")
 
         image_processor = image_processor if image_processor is not None else feature_extractor
+        
         if image_processor is None:
             raise ValueError("You need to specify an `image_processor`.")
         if tokenizer is None:
             raise ValueError("You need to specify a `tokenizer`.")
 
         super().__init__(image_processor, tokenizer)
-
-        ### ml: custom image tokenizer
+        
+        ### custom image tokenizer
         self.visual_token_transform = transforms.Compose([
                 # transforms.Resize((112, 112), transforms.InterpolationMode.LANCZOS),
                 transforms.Resize((112, 112)),
@@ -104,48 +101,8 @@ class LayoutLMv3PretrainProcessor(ProcessorMixin):
                 # functools.partial(torch.unsqueeze, dim=0),
                 map_pixels,
             ])
-        
-        def load_image_tokenizer(path='./dall_e_tokenizer/encoder.pkl'):
-            if path.startswith('http://') or path.startswith('https://'):
-                resp = requests.get(path)
-                resp.raise_for_status()
-                    
-                with io.BytesIO(resp.content) as buf:
-                    return torch.load(buf)
-            elif os.path.splitext(path)[1] == '.pkl':
-                if path == './dall_e_tokenizer/encoder.pkl':
-                    if not os.path.exists(path):
-                        print(f'{path} is not exist! download dall-e encoder.pkl now..')
-                        resp = requests.get('https://cdn.openai.com/dall-e/encoder.pkl')
-                        resp.raise_for_status()
-                        os.makedirs(os.path.dirname(path), exist_ok=True)
-
-                        with open(path, "wb") as file:
-                            file.write(resp.content)
-
-                with open(path, 'rb') as f:
-                    return torch.load(f)
-            
-            ### ml: custom image tokenizer
-            elif os.path.splitext(path)[1] == '.pt':
-                if not torch.cuda.is_available():
-                    device = torch.device('cpu')
-                else:
-                    device = torch.device('cuda')
-                vae_model = torch.load(path, device)
-                enc = Encoder()
-                enc_state_dict = {}
-                for key, value in vae_model['module'].items():
-                    if 'vae.enc.' == key[:len('vae.enc.')]:
-                        enc_state_dict[key[len('vae.enc.'):]] = value
-                    # elif 'vae.dec.' == key[:len('vae.dec.')]:
-                    #     dec_state_dict[key[len('vae.dec.'):]] = value
-                        
-                enc.load_state_dict(enc_state_dict, device)
-                return enc
-                 
-            
-        self.image_tokenizer = load_image_tokenizer('/home/mingi.lim/workspace/dall_e_tokenizer/global_step608626_19M_ep1.x_dalle_v2/model_states.pt')
+          
+        self.image_tokenizer = image_tokenizer
 
     def __call__(
         self,

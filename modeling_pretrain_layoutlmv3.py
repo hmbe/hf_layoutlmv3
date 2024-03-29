@@ -26,10 +26,8 @@ from transformers.models.layoutlmv3.modeling_layoutlmv3 import LayoutLMv3PreTrai
 from transformers.models.layoutlmv3.modeling_layoutlmv3 import LAYOUTLMV3_DOWNSTREAM_INPUTS_DOCSTRING, LAYOUTLMV3_START_DOCSTRING, LAYOUTLMV3_MODEL_INPUTS_DOCSTRING
 logger = logging.get_logger(__name__)
 
-### for MLM
 from transformers.models.roberta.modeling_roberta import RobertaLMHead
 
-###
 from modeling_output_layoutlmv3 import LayoutLMOutput, BaseLayoutLMOutput
 import copy
 
@@ -347,8 +345,6 @@ class CustomRobertaLMHead(nn.Module):
         else:
             self.bias = self.decoder.bias
 
-### ml: custom model
-### ml: 1st step, only train with mlm 
 class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)

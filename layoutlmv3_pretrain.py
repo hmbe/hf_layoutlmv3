@@ -1,4 +1,4 @@
-import sys, os
+import sys, os, io
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 # os.environ['CUDA_VISIBLE_DEVICES'] = '5'
 
@@ -14,6 +14,9 @@ from datasets import load_metric
 import numpy as np
 
 from transformers import LayoutLMv3ForTokenClassification
+from transformers import LayoutLMv3ImageProcessor, LayoutLMv3Tokenizer, LayoutLMv3TokenizerFast, BertTokenizer
+from transformers import LayoutLMv2TokenizerFast, LayoutLMv2Tokenizer
+
 from modeling_pretrain_layoutlmv3 import LayoutLMv3ForPretraining
 
 from transformers import AutoConfig, AutoModel
@@ -28,6 +31,15 @@ from utils_layoutlmv3 import MaskGenerator
 from data_collator_pretrain_layoutlmv3 import DataCollatorForLayoutLMv3
 import evaluate
 import torch
+import json
+import requests
+
+from transformers import AutoTokenizer
+
+from dall_e.encoder import Encoder
+from dall_e.decoder import Decoder
+
+### ml: for dalle encoder
 
 example_dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -36,8 +48,78 @@ model = LayoutLMv3ForPretraining.from_pretrained("microsoft/layoutlmv3-base",
                                                         label2id=label2id,
                                                         )
 
+### load image tokenizer, tokenizer
+def load_image_tokenizer(path='./dall_e_tokenizer/encoder.pkl'):
+    if path.startswith('http://') or path.startswith('https://'):
+        resp = requests.get(path)
+        resp.raise_for_status()
+            
+        with io.BytesIO(resp.content) as buf:
+            return torch.load(buf)
+    elif os.path.splitext(path)[1] == '.pkl':
+        if path == './dall_e_tokenizer/encoder.pkl':
+            if not os.path.exists(path):
+                print(f'{path} is not exist! download dall-e encoder.pkl now..')
+                resp = requests.get('https://cdn.openai.com/dall-e/encoder.pkl')
+                resp.raise_for_status()
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+
+                with open(path, "wb") as file:
+                    file.write(resp.content)
+
+        with open(path, 'rb') as f:
+            return torch.load(f)
+    
+    ### ml: custom image tokenizer
+    elif os.path.splitext(path)[1] == '.pt':
+        if not torch.cuda.is_available():
+            device = torch.device('cpu')
+        else:
+            device = torch.device('cuda')
+        vae_model = torch.load(path, device)
+        enc = Encoder()
+        enc_state_dict = {}
+        for key, value in vae_model['module'].items():
+            if 'vae.enc.' == key[:len('vae.enc.')]:
+                enc_state_dict[key[len('vae.enc.'):]] = value
+            # elif 'vae.dec.' == key[:len('vae.dec.')]:
+            #     dec_state_dict[key[len('vae.dec.'):]] = value
+                
+        enc.load_state_dict(enc_state_dict, device)
+        return enc
+           
+image_tokenizer = load_image_tokenizer('/home/mingi.lim/workspace/dall_e_tokenizer/global_step608626_19M_ep1.x_dalle_v2/model_states.pt')
+# tokenizer = LayoutLMv2TokenizerFast.from_pretrained("klue/roberta-small")
+# tokenizer = LayoutLMv2TokenizerFast.from_pretrained("microsoft/layoutlmv2-base-uncased")
+tokenizer = LayoutLMv3TokenizerFast.from_pretrained("microsoft/layoutlmv3-base")
+
+image_processor_config_str = """{
+  "apply_ocr": false,
+  "do_normalize": true,
+  "do_resize": true,
+  "feature_extractor_type": "LayoutLMv3FeatureExtractor",
+  "image_mean": [
+    0.5,
+    0.5,
+    0.5
+  ],
+  "image_std": [
+    0.5,
+    0.5,
+    0.5
+  ],
+  "ocr_lang": null,
+  "resample": 2,
+  "size": 224
+}"""
+
+image_processor_kwargs = json.loads(image_processor_config_str)
+image_processor = LayoutLMv3ImageProcessor(**image_processor_kwargs)
+
 auto_config = AutoConfig.from_pretrained("microsoft/layoutlmv3-base")
-processor = LayoutLMv3PretrainProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
+
+# processor = LayoutLMv3PretrainProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
+processor = LayoutLMv3PretrainProcessor(image_processor=image_processor, tokenizer=tokenizer, image_tokenizer=image_tokenizer)
 
 mask_generator = MaskGenerator(
     input_size = auto_config.input_size,
@@ -50,17 +132,27 @@ def prepare_examples(examples, is_train=True):
     images = examples['image']
     words = examples['tokens']
     boxes = examples['bboxes']
-    word_labels = examples['ner_tags']
 
-    encoding = processor(images, words, boxes=boxes, word_labels=word_labels, truncation=True, stride =128,
+    if 'ner_tags' in examples.keys():
+        # word_labels = examples['ner_tags']
+        examples.pop('ner_tags', None)
+
+    encoding = processor(images, words, boxes=boxes, truncation=True, stride=128,
         padding="max_length", max_length=512, return_overflowing_tokens=True, return_offsets_mapping=True)
+    
+    ### lm labels
+    encoding["labels"] = encoding['input_ids']
 
+    # encoding = processor(images, words, boxes=boxes, word_labels=word_labels, truncation=True, stride=128,
+    #     padding="max_length", max_length=512, return_overflowing_tokens=True, return_offsets_mapping=False)
+        
     ### im_mask
     encoding["im_mask"] = [mask_generator() for i in range(len(encoding['pixel_values']))]
 
     ### visual_bbox
     text_bboxes = encoding['bbox']
     image_poses = encoding['im_mask']
+    
     visual_bbox = init_visual_bbox()
 
     ### batch 별 별도 처리 수행

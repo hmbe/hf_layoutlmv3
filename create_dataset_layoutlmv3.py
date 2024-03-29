@@ -33,6 +33,7 @@ FILE_NAME = 'test'
     
 ### 1. load dataset
 ### column_names: ['id', 'tokens', 'bboxes', 'ner_tags', 'image']
+### 변경 column_names: ['pixel_values', 'input_ids', ]
 ### 추가 column_names: ['im_mask', 'alignment_labels', 'im_labels']
 ### 다른 데이터셋도 본 column name 따르기
 example_dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
@@ -119,7 +120,6 @@ if FILE_FORMAT == 'tfrecord':
                     'labels': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['labels'][i])),
                     'im_labels': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['im_labels'][i].numpy())),
                     'im_mask': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['im_mask'][i].numpy())),
-                    ### pytorch tensor
                     'alignment_labels': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['alignment_labels'][i].numpy())),
                 }))
 
