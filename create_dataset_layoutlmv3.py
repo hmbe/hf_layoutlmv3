@@ -22,11 +22,25 @@ from PIL import Image
 import io
 import pyarrow as pa
 import pyarrow.parquet as pq
+import cv2
 
 from datasets import Features, Sequence, ClassLabel, Value, Array2D, Array3D
+import torch
+import requests
+
+from dall_e.encoder import Encoder
+from dall_e.decoder import Decoder
+
+import json
+from transformers import LayoutLMv3ImageProcessor, LayoutLMv3Tokenizer, LayoutLMv3TokenizerFast, BertTokenizer
 
 ### tensorflow dependencies
 import tensorflow as tf
+
+from raw_dataset_generator_layoutlmv3 import AihubRawDataset
+# aihub_raw_builder = AihubRawDataset(root_dir='/data/aihub/', target_aihub_datasets=['023_OCR_DATA_PUBLIC'])
+# aihub_raw_builder.download_and_prepare()
+# dataset = aihub_raw_builder.as_dataset(streaming=True)
 
 FILE_FORMAT = 'tfrecord'
 FILE_NAME = 'test'
@@ -36,10 +50,80 @@ FILE_NAME = 'test'
 ### 변경 column_names: ['pixel_values', 'input_ids', ]
 ### 추가 column_names: ['im_mask', 'alignment_labels', 'im_labels']
 ### 다른 데이터셋도 본 column name 따르기
-example_dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
+# dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
+dataset = load_dataset("/home/mingi.lim/workspace/hf_layoutlmv3/raw_dataset_generator_layoutlmv3.py", target_aihub_datasets=['023_OCR_DATA_PUBLIC'], root_dir='/data/aihub/', streaming=True)
 
 ### 2. load processor
-processor = LayoutLMv3PretrainProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
+### load image tokenizer, tokenizer
+def load_image_tokenizer(path='./dall_e_tokenizer/encoder.pkl'):
+    if path.startswith('http://') or path.startswith('https://'):
+        resp = requests.get(path)
+        resp.raise_for_status()
+            
+        with io.BytesIO(resp.content) as buf:
+            return torch.load(buf)
+    elif os.path.splitext(path)[1] == '.pkl':
+        if path == './dall_e_tokenizer/encoder.pkl':
+            if not os.path.exists(path):
+                print(f'{path} is not exist! download dall-e encoder.pkl now..')
+                resp = requests.get('https://cdn.openai.com/dall-e/encoder.pkl')
+                resp.raise_for_status()
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+
+                with open(path, "wb") as file:
+                    file.write(resp.content)
+
+        with open(path, 'rb') as f:
+            return torch.load(f)
+    
+    ### ml: custom image tokenizer
+    elif os.path.splitext(path)[1] == '.pt':
+        if not torch.cuda.is_available():
+            device = torch.device('cpu')
+        else:
+            device = torch.device('cuda')
+        vae_model = torch.load(path, device)
+        enc = Encoder()
+        enc_state_dict = {}
+        for key, value in vae_model['module'].items():
+            if 'vae.enc.' == key[:len('vae.enc.')]:
+                enc_state_dict[key[len('vae.enc.'):]] = value
+            # elif 'vae.dec.' == key[:len('vae.dec.')]:
+            #     dec_state_dict[key[len('vae.dec.'):]] = value
+                
+        enc.load_state_dict(enc_state_dict, device)
+        return enc
+           
+image_tokenizer = load_image_tokenizer('/home/mingi.lim/workspace/dall_e_tokenizer/global_step608626_19M_ep1.x_dalle_v2/model_states.pt')
+
+tokenizer = LayoutLMv3TokenizerFast.from_pretrained("microsoft/layoutlmv3-base")
+
+image_processor_config_str = """{
+  "apply_ocr": false,
+  "do_normalize": true,
+  "do_resize": true,
+  "feature_extractor_type": "LayoutLMv3FeatureExtractor",
+  "image_mean": [
+    0.5,
+    0.5,
+    0.5
+  ],
+  "image_std": [
+    0.5,
+    0.5,
+    0.5
+  ],
+  "ocr_lang": null,
+  "resample": 2,
+  "size": 224
+}"""
+
+image_processor_kwargs = json.loads(image_processor_config_str)
+image_processor = LayoutLMv3ImageProcessor(**image_processor_kwargs)
+
+
+# processor = LayoutLMv3PretrainProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
+processor = LayoutLMv3PretrainProcessor(image_processor=image_processor, tokenizer=tokenizer, image_tokenizer=image_tokenizer)
 
 ### 3. set mask generator
 auto_config = AutoConfig.from_pretrained("microsoft/layoutlmv3-base")
@@ -51,10 +135,22 @@ mask_generator = MaskGenerator(
 
 ### 4. make features
 def prepare_encoding(examples):
-    images = examples['image']
-    words = examples['tokens']
+    if 'image' in examples.keys():
+        images = examples['image']
+    elif 'image_path' in examples.keys():
+        images = cv2.imread(examples['image_path'])
+
+    if 'tokens' in examples.keys():
+        words = examples['tokens']
+    elif 'words' in examples.keys():
+        words = examples['words']
+
     boxes = examples['bboxes']
-    word_labels = examples['ner_tags']
+
+    if 'ner_tags' in examples.keys():
+        word_labels = examples['ner_tags']
+    else:
+        word_labels = None
     
     ### im_labels
     encoding = processor(images, words, boxes=boxes, word_labels=word_labels, truncation=True, stride=128, padding="max_length", max_length=512, return_overflowing_tokens=True, return_offsets_mapping=True)
@@ -85,7 +181,7 @@ if FILE_FORMAT == 'tfrecord':
         'input_ids': tf.io.FixedLenFeature([], dtype=tf.int64),
         'attention_mask': tf.io.FixedLenFeature([], dtype=tf.int64),
         'bbox': tf.io.FixedLenFeature(dtype=tf.int64, shape=(512, 4)),
-        'labels': tf.io.FixedLenFeature([], dtype=tf.int64),
+        # 'labels': tf.io.FixedLenFeature([], dtype=tf.int64),
         'im_labels': tf.io.FixedLenFeature([], dtype=tf.int64),
         'im_mask': tf.io.FixedLenFeature([], dtype=tf.int64),
         'alignment_labels': tf.io.FixedLenFeature([], dtype=tf.int64),
@@ -97,14 +193,14 @@ elif FILE_FORMAT == 'parquet':
         'input_ids': Sequence(feature=Value(dtype='int64')),
         'attention_mask': Sequence(Value(dtype='int64')),
         'bbox': Array2D(dtype="int64", shape=(512, 4)),
-        'labels': Sequence(feature=Value(dtype='int64')),
+        # 'labels': Sequence(feature=Value(dtype='int64')),
         'im_labels': Sequence(feature=Value(dtype='int64')),
         'im_mask': Sequence(feature=Value(dtype='int64')),
         'alignment_labels': Sequence(feature=Value(dtype='bool')),
     })
 
 ### TODO: fix logic for loading data
-encodings = example_dataset['train']
+encodings = dataset['train']
 
 if FILE_FORMAT == 'tfrecord':
     # TFRecordWriter를 사용하여 TFRecord 파일 생성
@@ -117,7 +213,7 @@ if FILE_FORMAT == 'tfrecord':
                     'input_ids': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['input_ids'][i])),
                     'attention_mask': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['attention_mask'][i])),
                     'bbox': tf.train.Feature(int64_list=tf.train.Int64List(value=np.array(encoding['bbox'][i]).flatten())),
-                    'labels': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['labels'][i])),
+                    # 'labels': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['labels'][i])),
                     'im_labels': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['im_labels'][i].numpy())),
                     'im_mask': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['im_mask'][i].numpy())),
                     'alignment_labels': tf.train.Feature(int64_list=tf.train.Int64List(value=encoding['alignment_labels'][i].numpy())),
