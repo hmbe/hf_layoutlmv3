@@ -72,7 +72,7 @@ class LayoutLMv3PretrainProcessor(ProcessorMixin):
 
     attributes = ["image_processor", "tokenizer"]
     image_processor_class = "LayoutLMv3ImageProcessor"
-    tokenizer_class = ("LayoutLMv3Tokenizer", "LayoutLMv3TokenizerFast", "LayoutLMv2Tokenizer", "LayoutLMv2TokenizerFast")
+    tokenizer_class = ("LayoutLMv3Tokenizer", "LayoutLMv3TokenizerFast", "LayoutLMv2Tokenizer", "LayoutLMv2TokenizerFast", "BertTokenizer", "BertTokenizerFast")
 
     def __init__(self, image_processor=None, tokenizer=None, image_tokenizer=None, **kwargs):
         feature_extractor = None

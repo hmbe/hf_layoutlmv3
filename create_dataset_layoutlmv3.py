@@ -38,18 +38,11 @@ from transformers import LayoutLMv3ImageProcessor, LayoutLMv3Tokenizer, LayoutLM
 import tensorflow as tf
 
 from raw_dataset_generator_layoutlmv3 import AihubRawDataset
-# aihub_raw_builder = AihubRawDataset(root_dir='/data/aihub/', target_aihub_datasets=['023_OCR_DATA_PUBLIC'])
-# aihub_raw_builder.download_and_prepare()
-# dataset = aihub_raw_builder.as_dataset(streaming=True)
 
 FILE_FORMAT = 'tfrecord'
 FILE_NAME = 'test'
     
 ### 1. load dataset
-### column_names: ['id', 'tokens', 'bboxes', 'ner_tags', 'image']
-### 변경 column_names: ['pixel_values', 'input_ids', ]
-### 추가 column_names: ['im_mask', 'alignment_labels', 'im_labels']
-### 다른 데이터셋도 본 column name 따르기
 # dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
 dataset = load_dataset("/home/mingi.lim/workspace/hf_layoutlmv3/raw_dataset_generator_layoutlmv3.py", target_aihub_datasets=['023_OCR_DATA_PUBLIC'], root_dir='/data/aihub/', streaming=True)
 
@@ -120,7 +113,6 @@ image_processor_config_str = """{
 
 image_processor_kwargs = json.loads(image_processor_config_str)
 image_processor = LayoutLMv3ImageProcessor(**image_processor_kwargs)
-
 
 # processor = LayoutLMv3PretrainProcessor.from_pretrained("microsoft/layoutlmv3-base", apply_ocr=False)
 processor = LayoutLMv3PretrainProcessor(image_processor=image_processor, tokenizer=tokenizer, image_tokenizer=image_tokenizer)

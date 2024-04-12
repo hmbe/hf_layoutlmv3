@@ -8,8 +8,9 @@ import datasets
 from PIL import Image
 import numpy as np
 
-from tfrecord.reader import tfrecord_loader
 import tfrecord
+from tfrecord.reader import tfrecord_loader
+from tfrecord.torch.dataset import TFRecordDataset
 
 from datasets import Features, Sequence, ClassLabel, Value, Array2D, Array3D
 
@@ -42,6 +43,7 @@ class AihubPreprocessedDataset(datasets.GeneratorBasedBuilder):
     def __init__(self, *args, **kwargs):
         # self.target_aihub_datasets = kwargs.pop('target_aihub_datasets', [])
         self.target_path = kwargs.pop('target_path', None)
+        self.target_aihub_datasets = kwargs.pop('target_aihub_datasets', [])
 
         # we need to define custom features for `set_format` (used later on) to work properly
         self.feature_description = Features({
@@ -71,7 +73,6 @@ class AihubPreprocessedDataset(datasets.GeneratorBasedBuilder):
                     'input_ids': Sequence(feature=Value(dtype='int64')),
                     'attention_mask': Sequence(Value(dtype='int64')),
                     'bbox': Array2D(dtype="int64", shape=(512, 4)),
-                    # 'labels': Sequence(feature=Value(dtype='int64')),
                     'im_labels': Sequence(feature=Value(dtype='int64')),
                     'im_mask': Sequence(feature=Value(dtype='int64')),
                     'alignment_labels': Sequence(feature=Value(dtype='bool')),
@@ -99,60 +100,41 @@ class AihubPreprocessedDataset(datasets.GeneratorBasedBuilder):
         ### load preprocessed dataset
         if len(os.path.splitext(self.target_path)) == 1:
             print('target_path is directory!')
-        if os.path.splitext(self.target_path) == '.tfrecord':
+
+        if os.path.splitext(self.target_path)[1] == '.tfrecord':
             print('load tfrecord preprocessed dataset!')
-            
-        for guid, (img_file, ann_file) in enumerate(zip(img_files, ann_files)):
-            words = []
-            bboxes = []
-            try:
-                with open(ann_file, "r", encoding="utf8") as f:
-                    data = json.load(f)
-            except:
-                print(f'{ann_file} can not be loaded!')
-                continue
-            
-            try:
-                image, size = load_image(img_file)
-            except:
-                print(f'{img_file} can not be loaded!')
-                continue
-            
-            if dataset_name  == '023_OCR_DATA_PUBLIC':
-                json_bboxes = data['Bbox']
-                size = (data['Images']['width'], data['Images']['height'])
-                # word : str, bbox : -> xyxy, size : wh
-                for json_bbox in json_bboxes:
-                    word = json_bbox['data']
-                    bbox = normalize_bbox([min(json_bbox['x']), min(json_bbox['y']), max(json_bbox['x']), max(json_bbox['y'])], size)
-                    words.append(word)
-                    bboxes.append(bbox)
 
-            elif dataset_name == '032_PUBLIC_ADMIN_DOCUMENT_OCR':
-                json_bboxes = data['bbox']
-                size = (data['Images']['width'], data['Images']['height'])
-                # word : str, bbox : -> xyxy, size : wh
-                for json_bbox in json_bboxes:
-                    word = json_bbox['data']
-                    bbox = normalize_bbox([min(json_bbox['x']), min(json_bbox['y']), max(json_bbox['x']), max(json_bbox['y'])], size)
-                    words.append(word)
-                    bboxes.append(bbox)
+            # feature_description = {
+            #     'pixel_values': tf.io.FixedLenFeature(dtype=tf.float32, shape=(3, 224, 224)),
+            #     'input_ids': tf.io.FixedLenFeature([], dtype=tf.int64),
+            #     'attention_mask': tf.io.FixedLenFeature([], dtype=tf.int64),
+            #     'bbox': tf.io.FixedLenFeature(dtype=tf.int64, shape=(512, 4)),
+            #     'im_labels': tf.io.FixedLenFeature([], dtype=tf.int64),
+            #     'im_mask': tf.io.FixedLenFeature([], dtype=tf.int64),
+            #     'alignment_labels': tf.io.FixedLenFeature([], dtype=tf.int64),
+            # }
 
-            elif dataset_name == '025_OCR_DATA_FINANCE_LOGISTICS':
-                json_bboxes = data['bbox']
-                size = (data['Images']['width'], data['Images']['height'])
-                # word : str, bbox : -> xyxy, size : wh
-                for json_bbox in json_bboxes:
-                    word = json_bbox['data']
-                    bbox = normalize_bbox([min(json_bbox['x']), min(json_bbox['y']), max(json_bbox['x']), max(json_bbox['y'])], size)
-                    words.append(word)
-                    bboxes.append(bbox)
-                
-            yield guid, {"id": str(guid), "words": words, "bboxes": bboxes, "image_path": img_file}
+            index_path = None
+            feature_description = {
+                'pixel_values': "float",
+                'input_ids': "int",
+                'attention_mask': "int",
+                'bbox': "int",
+                'im_labels': "int",
+                'im_mask': "int",
+                'alignment_labels': "int",
+            }
+
+            loader = tfrecord_loader(self.target_path, index_path, feature_description)
+
+        for guid, record in enumerate(loader):
+            yield guid, record
 
 
 if __name__ == '__main__':
-    aihub_preprocessed_builder = AihubPreprocessedDataset(target_path='/home/mingi.lim/workspace/_test.tfrecord')
+    # aihub_preprocessed_builder = AihubPreprocessedDataset(target_path='/home/mingi.lim/workspace/_test.tfrecord')
+    aihub_preprocessed_builder = AihubPreprocessedDataset(target_path='/home/mingi.lim/workspace/test.tfrecord')
+    
     aihub_preprocessed_builder.download_and_prepare()
     dataset = aihub_preprocessed_builder.as_dataset(split='train')
     print(dataset)

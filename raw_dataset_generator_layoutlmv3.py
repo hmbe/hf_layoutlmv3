@@ -43,7 +43,6 @@ class AihubRawDataset(datasets.GeneratorBasedBuilder):
         # self.target_aihub_datasets = ['023_OCR_DATA_PUBLIC']
         # self.target_aihub_datasets = ['032_PUBLIC_ADMIN_DOCUMENT_OCR']
         
-
     def _info(self):
         return datasets.DatasetInfo(
             description=None,

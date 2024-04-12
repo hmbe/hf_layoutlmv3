@@ -471,6 +471,9 @@ class LayoutLMv3ForPretraining(LayoutLMv3PreTrainedModel):
 
         mask_token = 50264
         masked_lm_loss = None
+        
+        ### TODO: convert to numpy array
+        
         if labels is not None:
             # move labels to correct device to enable model parallelism
             lm_mask = [[value == mask_token for value in row] for row in input_ids.tolist()]

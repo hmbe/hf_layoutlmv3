@@ -1,6 +1,9 @@
 import sys, os, io
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-# os.environ['CUDA_VISIBLE_DEVICES'] = '5'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['CUDA_VISIBLE_DEVICES']='0'
+os.environ['WANDB_LOG_MODEL']='true'
+
+import wandb
 
 from datasets import load_dataset
 from PIL import Image
@@ -33,15 +36,43 @@ import evaluate
 import torch
 import json
 import requests
+from tfrecord.torch.dataset import TFRecordDataset, MultiTFRecordDataset
 
 from transformers import AutoTokenizer
 
 from dall_e.encoder import Encoder
 from dall_e.decoder import Decoder
 
-### ml: for dalle encoder
+USE_HF_DATASET = False
 
-example_dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
+wandb.login()
+### ml: for dalle encoder
+# example_dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
+if USE_HF_DATASET:
+    dataset = load_dataset('/home/mingi.lim/workspace/hf_layoutlmv3/aihub_dataset_generator_layoutlmv3.py', target_path='/home/mingi.lim/workspace/hf_layoutlmv3/data/test01/test.tfrecord', streaming=True)
+else:
+    tfrecord_dir = "/home/mingi.lim/workspace/hf_layoutlmv3/data/test01"
+    tfrecord_pattern = tfrecord_dir + "/{}.tfrecord"
+    index_pattern = tfrecord_dir + "/{}.index"
+
+    splits = {
+        "train": 0.8,
+        "val": 0.2,
+    }
+
+    feature_description = {
+        'pixel_values': "float",
+        'input_ids': "int",
+        'attention_mask': "int",
+        'bbox': "int",
+        'im_labels': "int",
+        'im_mask': "int",
+        'alignment_labels': "int",
+    }
+
+    dataset = MultiTFRecordDataset(tfrecord_pattern, index_pattern, splits, feature_description)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=32)
+
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 model = LayoutLMv3ForPretraining.from_pretrained("microsoft/layoutlmv3-base",
                                                         id2label=id2label,
@@ -89,9 +120,9 @@ def load_image_tokenizer(path='./dall_e_tokenizer/encoder.pkl'):
         return enc
            
 image_tokenizer = load_image_tokenizer('/home/mingi.lim/workspace/dall_e_tokenizer/global_step608626_19M_ep1.x_dalle_v2/model_states.pt')
-# tokenizer = LayoutLMv2TokenizerFast.from_pretrained("klue/roberta-small")
+tokenizer = AutoTokenizer.from_pretrained("klue/roberta-small")
 # tokenizer = LayoutLMv2TokenizerFast.from_pretrained("microsoft/layoutlmv2-base-uncased")
-tokenizer = LayoutLMv3TokenizerFast.from_pretrained("microsoft/layoutlmv3-base")
+# tokenizer = LayoutLMv3TokenizerFast.from_pretrained("microsoft/layoutlmv3-base")
 
 image_processor_config_str = """{
   "apply_ocr": false,
@@ -127,6 +158,9 @@ mask_generator = MaskGenerator(
     model_patch_size = auto_config.patch_size,
     mask_ratio = 0.4
 )
+
+pixel_value_shape = (3, 224, 224)
+bbox_shape = (512, 4)
 
 def prepare_examples(examples, is_train=True):
     images = examples['image']
@@ -167,12 +201,21 @@ def prepare_examples(examples, is_train=True):
 
     return encoding
 
+
+def prepare_examples_preprocessed(examples):
+
+    encoding = examples
+    encoding['pixel_values'] = [pixel_values_arr.reshape(pixel_value_shape) for pixel_values_arr in encoding['pixel_values']]
+    encoding['bbox'] = [bbox_arr.reshape(bbox_shape) for bbox_arr in encoding['bbox']]
+    encoding['labels'] = encoding['input_ids']
+    return encoding
+
 # we need to define custom features for `set_format` (used later on) to work properly
 features = Features({
-    'pixel_values': Array3D(dtype="float32", shape=(3, 224, 224)),
+    'pixel_values': Array3D(dtype="float32", shape=pixel_value_shape),
     'input_ids': Sequence(feature=Value(dtype='int64')),
     'attention_mask': Sequence(Value(dtype='int64')),
-    'bbox': Array2D(dtype="int64", shape=(512, 4)),
+    'bbox': Array2D(dtype="int64", shape=bbox_shape),
     'labels': Sequence(feature=Value(dtype='int64')),
     'im_labels': Sequence(feature=Value(dtype='int64')),
     'im_mask': Sequence(feature=Value(dtype='int64')),
@@ -192,18 +235,18 @@ data_collator = DataCollatorForLayoutLMv3(
 
 column_names = example_dataset["train"].column_names
 train_dataset = example_dataset["train"].map(
-    prepare_examples,
+    prepare_examples_preprocessed,
     batched=True,
     batch_size=16,
-    remove_columns=column_names,
+    # remove_columns=column_names,
     features=features,
 )
 
-test_dataset = example_dataset["test"].map(
-    prepare_examples,
+test_dataset = example_dataset["validation"].map(
+    prepare_examples_preprocessed,
     batched=True,
-    batch_size=16,
-    remove_columns=column_names,
+    batch_size=4,
+    # remove_columns=column_names,
     features=features,
 )
 
