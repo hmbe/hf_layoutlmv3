@@ -43,11 +43,12 @@ import threading
 ROOT_DIR='/mnt/nas-drive-workspace/Datasets/aihub/'
 
 FILE_FORMAT = 'tfrecord'
-SAVE_DIR = '/mnt/nas-drive-workspace/Datasets/aihub-preprocessed/023_OCR_DATA_PUBLIC/'
+
 TARGET_DATASET_TYPES = ['train', 'validation']
 DATASET_SPLIT_NUMS = [10, 4]
 
 TARGET_AIHUB_DATASET=['023_OCR_DATA_PUBLIC']
+SAVE_DIR = f'/mnt/nas-drive-workspace/Datasets/aihub-preprocessed/{TARGET_AIHUB_DATASET[0]}/'
 
 ### 1. load dataset
 # dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
@@ -223,7 +224,7 @@ for i, dataset_type in enumerate(TARGET_DATASET_TYPES):
     threads = []
     dataset_split_num = DATASET_SPLIT_NUMS[i]
     for j in range(dataset_split_num):
-        file_name = f'{"_".join(TARGET_AIHUB_DATASET)}_{dataset_type}_{j}.{FILE_FORMAT}'
+        file_name = '/'.join([SAVE_DIR, f'{"_".join(TARGET_AIHUB_DATASET)}_{dataset_type}_{j}.{FILE_FORMAT}'])
         dataset = load_dataset("./raw_dataset_generator_layoutlmv3.py", 
                                 target_aihub_datasets=TARGET_AIHUB_DATASET, 
                                 root_dir=ROOT_DIR,
