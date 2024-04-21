@@ -8,6 +8,8 @@ import datasets
 from PIL import Image
 import numpy as np
 
+from create_filelist_layoutlmv3 import get_file_paths
+
 logger = datasets.logging.get_logger(__name__)
 
 def load_image(image_path):
@@ -37,6 +39,9 @@ class AihubRawDataset(datasets.GeneratorBasedBuilder):
     def __init__(self, *args, **kwargs):
         self.target_aihub_datasets = kwargs.pop('target_aihub_datasets', [])
         self.root_dir = kwargs.pop('root_dir', None)
+
+        self.dataset_split_num = kwargs.pop('dataset_split_num', 1)
+        self.dataset_split_idx = kwargs.pop('dataset_split_idx', 0)
         super().__init__(*args, **kwargs)
         
         # self.target_aihub_datasets = ['023_OCR_DATA_PUBLIC', '032_PUBLIC_ADMIN_DOCUMENT_OCR', '025_OCR_DATA_FINANCE_LOGISTICS']
@@ -70,138 +75,6 @@ class AihubRawDataset(datasets.GeneratorBasedBuilder):
                 name=datasets.Split.VALIDATION, gen_kwargs={"root_dir": f"{self.root_dir}", "target_datasets": self.target_aihub_datasets, "type": "validation"}
             ),
         ]
-
-    def get_file_paths_with_matching(self, root_dir, dataset_name, type="train"):
-        ### 1. get images
-        if dataset_name == '023_OCR_DATA_PUBLIC':
-            if type == "train":
-                img_glob_pattern = f'{root_dir}/023_OCR_DATA_PUBLIC/01-1.정식개방데이터/Training/01.원천데이터/**/*'
-                ann_glob_pattern = f'{root_dir}/023_OCR_DATA_PUBLIC/01-1.정식개방데이터/Training/02.라벨링데이터/**/*'
-
-            elif type == "validation":
-                img_glob_pattern = f'{root_dir}/023_OCR_DATA_PUBLIC/01-1.정식개방데이터/Validation/01.원천데이터/**/*'
-                ann_glob_pattern = f'{root_dir}/023_OCR_DATA_PUBLIC/01-1.정식개방데이터/Validation/02.라벨링데이터/**/*'
-
-        elif dataset_name == '032_PUBLIC_ADMIN_DOCUMENT_OCR':
-            if type == "train":
-                img_glob_pattern = f'{root_dir}/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/01.Training/[[]원천[]]*/**/*'
-                ann_glob_pattern = f'{root_dir}/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/01.Training/[[]라벨[]]*/**/*'
-
-            elif type == "validation":
-                img_glob_pattern = f'{root_dir}/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/02.Validation/[[]원천[]]*/**/*'
-                ann_glob_pattern = f'{root_dir}/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/02.Validation/[[]라벨[]]*/**/*'
-        
-        elif dataset_name == '025_OCR_DATA_FINANCE_LOGISTICS':
-            if type == "train":
-                img_glob_pattern = f'{root_dir}/025_OCR_DATA_FINANCE_LOGISTICS/01-1.정식개방데이터/Training/01.원천데이터/**/*'
-                ann_glob_pattern = f'{root_dir}/025_OCR_DATA_FINANCE_LOGISTICS/01-1.정식개방데이터/Training/02.라벨링데이터/**/*'
-            
-            elif type == "validation":
-                img_glob_pattern = f'{root_dir}/025_OCR_DATA_FINANCE_LOGISTICS/01-1.정식개방데이터/Validation/01.원천데이터/**/*'
-                ann_glob_pattern = f'{root_dir}/025_OCR_DATA_FINANCE_LOGISTICS/01-1.정식개방데이터/Validation/02.라벨링데이터/**/*'
-
-
-
-        # img_dirs = sorted([d for d in os.listdir(img_root_dir) if os.path.isdir(os.path.join(img_root_dir, d))])
-        # ann_dirs = sorted([d for d in os.listdir(ann_root_dir) if os.path.isdir(os.path.join(ann_root_dir, d))])
-        
-        ### filter ann, image files
-        img_exts = ['.jpg', '.jpeg', '.png', '.tif', '.bmp']
-        ann_exts = ['.json', '.txt']
-
-        img_files = []
-        _img_files = glob.glob(img_glob_pattern, recursive=True)
-        for _img_file in _img_files:
-            if os.path.splitext(_img_file)[1].lower() in img_exts:
-                img_files.append(_img_file)
-
-        ann_files = []
-        _ann_files = glob.glob(ann_glob_pattern, recursive=True)
-        for _ann_file in _ann_files:
-            if os.path.splitext(_ann_file)[1].lower() in ann_exts:
-                ann_files.append(_ann_file)
-
-        print('image and annotation file paths load completed!')
-
-        ann_files_set = set(ann_files)
-
-        found_img_files = []
-        found_ann_files = []
-
-        if dataset_name == '023_OCR_DATA_PUBLIC':
-            ### convert list to set for matching data
-            # /data/aihub/023_OCR_DATA_PUBLIC/01-1.정식개방데이터/Training/01.원천데이터/TS_OCR(public)_CST_2000_5280188_0002/CST_2000_5280188_0002_0599.jpg
-            # /data/aihub/023_OCR_DATA_PUBLIC/01-1.정식개방데이터/Training/02.라벨링데이터/TL_OCR(public)_CST_2000_5280188_0002/CST_2000_5280188_0002_0599.json
-
-            for img_file in img_files:
-                img_file_split = img_file.split('/')
-                img_file_split[-3] = '02.라벨링데이터'
-                img_file_split[-2] = 'TL' + img_file_split[-2][2:] if img_file_split[-4] == 'Training' else 'VL' + img_file_split[-2][2:]
-                img_file_split[-1] = os.path.splitext(img_file_split[-1])[0] + '.json'
-
-                ann_file = '/'.join(img_file_split)
-                
-                if ann_file in ann_files_set:
-                    found_img_files.append(img_file)
-                    found_ann_files.append(ann_file)
-                else:
-                    print(f'{ann_file} 이 실제 ann 경로에 존재하지 않습니다.')
-
-        elif dataset_name == '032_PUBLIC_ADMIN_DOCUMENT_OCR':
-            # /data/aihub/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/01.Training/[원천]train_partly_labeling_16/2.원천데이터_부분라벨링/주민복지/5350030/1982/0001/5350030-1982-0001-0001.jpg
-            # /data/aihub/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/01.Training/[라벨]train_partly_labling/주민복지/5350030/1982/0001/5350030-1982-0001-0001.json
-            
-            # /data/aihub/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/01.Training/[원천]train1/02.원천데이터(jpg)/인.허가/5350093/2001/5350093-2001-0001-0001.jpg
-            # /data/aihub/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/01.Training/[라벨]train/01.라벨링데이터(Json)/인.허가/5350093/2001/5350093-2001-0001-0001.json
-
-            # /data/aihub/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/02.Validation/[원천]validation/02.원천데이터(Jpg)/주민자치/5350047/1994/5350047-1994-0001-0707.jpg
-            # /data/aihub/032_PUBLIC_ADMIN_DOCUMENT_OCR/01.데이터/02.Validation/[라벨]validation/01.라벨링데이터(Json)/주민자치/5350047/1994/5350047-1994-0001-0707.json
-
-            for img_file in img_files:
-                img_file_split = img_file.split('/')
-
-                if 'train_partly_labeling' in img_file_split[-7]:
-                    ann_file = '/'.join(img_file.split('/')[:-7]) + '/[라벨]train_partly_labling/' + '/'.join(img_file.split('/')[-5:])
-                    ann_file = os.path.splitext(ann_file)[0] + '.json'
-
-                elif 'train' in img_file_split[-6]:
-                    ann_file = '/'.join(img_file.split('/')[:-6]) + '/[라벨]train/01.라벨링데이터(Json)/' + '/'.join(img_file.split('/')[-4:])
-                    ann_file = os.path.splitext(ann_file)[0] + '.json'
-
-                elif 'validation' in img_file_split[-6]:
-                    ann_file = '/'.join(img_file.split('/')[:-6]) + '/[라벨]validation/01.라벨링데이터(Json)/' + '/'.join(img_file.split('/')[-4:])
-                    ann_file = os.path.splitext(ann_file)[0] + '.json'
-
-                else:
-                    print(f'img file 경로 포맷이 맞지 않습니다. {img_file}')
-                    continue
-
-                if ann_file in ann_files_set:
-                    found_img_files.append(img_file)
-                    found_ann_files.append(ann_file)
-                else:
-                    print(f'{ann_file} 이 실제 ann 경로에 존재하지 않습니다.')
-
-        elif dataset_name == '025_OCR_DATA_FINANCE_LOGISTICS':
-            # /data/aihub/025_OCR_DATA_FINANCE_LOGISTICS/01-1.정식개방데이터/Validation/02.라벨링데이터/VL_금융_1.은행_1-1.신고서/IMG_OCR_6_F_0031102.json
-            # /data/aihub/025_OCR_DATA_FINANCE_LOGISTICS/01-1.정식개방데이터/Validation/01.원천데이터/VS_금융_1.은행_1-1.신고서/IMG_OCR_6_F_0031102.png
-            
-            for img_file in img_files:
-                img_file_split = img_file.split('/')
-                img_file_split[-3] = '02.라벨링데이터'
-                img_file_split[-2] = 'TL' + img_file_split[-2][2:] if img_file_split[-4] == 'Training' else 'VL' + img_file_split[-2][2:]
-                img_file_split[-1] = os.path.splitext(img_file_split[-1])[0] + '.json'
-
-                ann_file = '/'.join(img_file_split)
-                
-                if ann_file in ann_files_set:
-                    found_img_files.append(img_file)
-                    found_ann_files.append(ann_file)
-                else:
-                    print(f'{ann_file} 이 실제 ann 경로에 존재하지 않습니다.')
-        print(f'{len(found_img_files)} files are found!')
-        return found_img_files, found_ann_files
-        
     
     def _generate_examples(self, root_dir, target_datasets, type):
         ### generate full file path with type and target_dataset
@@ -209,8 +82,17 @@ class AihubRawDataset(datasets.GeneratorBasedBuilder):
         print(target_datasets)
         for dataset_name in target_datasets:
             ### make ann_dir and img_dir for each datasets
-            logger.info(f"⏳ Generating examples.. root_dir: {root_dir}, target_datasets: {target_datasets}")
-            img_files, ann_files = self.get_file_paths_with_matching(root_dir, dataset_name, type)
+            # logger.info(f"⏳ Generating examples.. root_dir: {root_dir}, target_datasets: {target_datasets}")
+            print(f"⏳ Generating examples.. root_dir: {root_dir}, target_datasets: {target_datasets}")
+
+            img_files, ann_files = get_file_paths(root_dir, dataset_name, type)
+            # self.dataset_split_num = kwargs.pop('dataset_split_num', 1)
+            # self.dataset_split_idx = kwargs.pop('dataset_split_idx', 0)
+
+            quotient = float(len(img_files)) / float(self.dataset_split_num)
+            img_files = img_files[int(quotient*self.dataset_split_idx):int(quotient*(self.dataset_split_idx+1))]
+            ann_files = ann_files[int(quotient*self.dataset_split_idx):int(quotient*(self.dataset_split_idx+1))]
+
             for guid, (img_file, ann_file) in enumerate(zip(img_files, ann_files)):
                 words = []
                 bboxes = []
@@ -256,20 +138,30 @@ class AihubRawDataset(datasets.GeneratorBasedBuilder):
                         bbox = normalize_bbox([min(json_bbox['x']), min(json_bbox['y']), max(json_bbox['x']), max(json_bbox['y'])], size)
                         words.append(word)
                         bboxes.append(bbox)
+
+                elif dataset_name == '055_FINANCE_OCR_DATA':
+                    json_polygons = data['annotations'][0]['polygons']
+                    size = (data['images'][0]['width'], data['images'][0]['height'])
+
+                    # word : str, bbox : -> xyxy, size : wh
+                    for i, json_polygon in enumerate(json_polygons):
+                        word = json_polygon['text']
+                        json_polygon_x_list = [p[0] for p in json_polygon['points']]
+                        json_polygon_y_list = [p[1] for p in json_polygon['points']]
+
+                        bbox = normalize_bbox([min(json_polygon_x_list), min(json_polygon_y_list), max(json_polygon_x_list), max(json_polygon_y_list)], size)
+                        words.append(word)
+                        bboxes.append(bbox)
                     
                 yield guid, {"id": str(guid), "words": words, "bboxes": bboxes, "image_path": img_file}
 
 
 if __name__ == '__main__':
-    aihub_raw_builder = AihubRawDataset()
+    target_aihub_datasets = ['055_FINANCE_OCR_DATA']
+    root_dir = '/mnt/nas-drive-workspace/Datasets/aihub/'
+    aihub_raw_builder = AihubRawDataset(root_dir=root_dir, target_aihub_datasets=target_aihub_datasets)
     aihub_raw_builder.download_and_prepare()
     dataset = aihub_raw_builder.as_dataset(split='train')
     print(dataset)
     print(next(iter(dataset)))
-    # first_batch = dataset['train'].take(1)
-
-    # # 첫 번째 배치 출력
-    # for sample in first_batch:
-    #     print(sample)
-
     print('done!')

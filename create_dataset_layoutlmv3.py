@@ -38,16 +38,22 @@ from transformers import LayoutLMv3ImageProcessor, LayoutLMv3Tokenizer, LayoutLM
 import tensorflow as tf
 
 from raw_dataset_generator_layoutlmv3 import AihubRawDataset
+import threading
+
+ROOT_DIR='/mnt/nas-drive-workspace/Datasets/aihub/'
 
 FILE_FORMAT = 'tfrecord'
-FILE_NAME = 'test'
-    
+SAVE_DIR = '/mnt/nas-drive-workspace/Datasets/aihub-preprocessed/023_OCR_DATA_PUBLIC/'
+TARGET_DATASET_TYPES = ['train', 'validation']
+DATASET_SPLIT_NUMS = [10, 4]
+
+TARGET_AIHUB_DATASET=['023_OCR_DATA_PUBLIC']
+
 ### 1. load dataset
 # dataset = load_dataset("nielsr/funsd-layoutlmv3", streaming=True)
-dataset = load_dataset("/home/mingi.lim/workspace/hf_layoutlmv3/raw_dataset_generator_layoutlmv3.py", target_aihub_datasets=['023_OCR_DATA_PUBLIC'], root_dir='/data/aihub/', streaming=True)
+# dataset = load_dataset("./raw_dataset_generator_layoutlmv3.py", target_aihub_datasets=['023_OCR_DATA_PUBLIC'], root_dir='/data/aihub/', streaming=True)
 
 ### 2. load processor
-### load image tokenizer, tokenizer
 def load_image_tokenizer(path='./dall_e_tokenizer/encoder.pkl'):
     if path.startswith('http://') or path.startswith('https://'):
         resp = requests.get(path)
@@ -87,8 +93,9 @@ def load_image_tokenizer(path='./dall_e_tokenizer/encoder.pkl'):
         enc.load_state_dict(enc_state_dict, device)
         return enc
            
-image_tokenizer = load_image_tokenizer('/home/mingi.lim/workspace/dall_e_tokenizer/global_step608626_19M_ep1.x_dalle_v2/model_states.pt')
-
+# image_tokenizer = load_image_tokenizer('/home/mingi.lim/workspace/dall_e_tokenizer/global_step608626_19M_ep1.x_dalle_v2/model_states.pt')
+# image_tokenizer = load_image_tokenizer()
+image_tokenizer = load_image_tokenizer('/mnt/nas-drive-workspace/Models/tokenizer/dall_e_tokenizer/global_step608626_19M_ep1.x_dalle_v2/model_states.pt')
 tokenizer = LayoutLMv3TokenizerFast.from_pretrained("microsoft/layoutlmv3-base")
 
 image_processor_config_str = """{
@@ -192,11 +199,9 @@ elif FILE_FORMAT == 'parquet':
     })
 
 ### TODO: fix logic for loading data
-encodings = dataset['train']
 
-if FILE_FORMAT == 'tfrecord':
-    # TFRecordWriter를 사용하여 TFRecord 파일 생성
-    with tf.io.TFRecordWriter(f'{FILE_NAME}.{FILE_FORMAT}') as writer:
+def write_tfrecord(thread_id, file_name, encodings):
+    with tf.io.TFRecordWriter(file_name) as writer:
         for encoding in tqdm(encodings):
             encoding = prepare_encoding(encoding)
             for i in range(len(encoding['input_ids'])):
@@ -212,3 +217,23 @@ if FILE_FORMAT == 'tfrecord':
                 }))
 
                 writer.write(example.SerializeToString())
+
+print('start creating dataset!')
+for i, dataset_type in enumerate(TARGET_DATASET_TYPES):
+    threads = []
+    dataset_split_num = DATASET_SPLIT_NUMS[i]
+    for j in range(dataset_split_num):
+        file_name = f'{"_".join(TARGET_AIHUB_DATASET)}_{dataset_type}_{j}.{FILE_FORMAT}'
+        dataset = load_dataset("./raw_dataset_generator_layoutlmv3.py", 
+                                target_aihub_datasets=TARGET_AIHUB_DATASET, 
+                                root_dir=ROOT_DIR,
+                                dataset_split_num = dataset_split_num,
+                                dataset_split_idx = j,
+                                streaming=True)
+        encodings = dataset[dataset_type]
+        thread = threading.Thread(target=write_tfrecord, args=(j, file_name, encodings))
+        thread.start()
+        threads.append(thread)
+
+    for thread in threads:
+        thread.join()
